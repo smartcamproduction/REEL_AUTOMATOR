@@ -170,6 +170,11 @@ Zasady:
     // S-19 word-by-word .srt export mode. Per-machine preference persisted in
     // localStorage alongside device/computeType — never written to .reelproj.
     wordLevelSrtExport: false,
+    // Words grouped into one cue when wordLevelSrtExport is on (1 = classic
+    // word-by-word), and whether `.srt` exports drop punctuation. Per-machine
+    // export prefs persisted with wordLevelSrtExport — never written to .reelproj.
+    srtWordsPerCue: 1,
+    srtStripPunctuation: false,
     // Cohere-only run knob (local-cohere-transcription Phase 4): honored only on
     // the native Cohere engine path; ignored by the WhisperX/CT2 path. Rust
     // defaults it on when unset, so an older state shape transcribes unchanged.

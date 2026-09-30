@@ -901,7 +901,46 @@
               <div
                 style="font-size: 11px; color: var(--text3); margin-top: 4px"
               >
-                Każde słowo jako osobny napis — dla Reelsów/TikToka.
+                Krótkie napisy (1 lub więcej słów na napis) — dla
+                Reelsów/TikToka.
+              </div>
+            </div>
+            <div class="setting-item">
+              <label for="advSrtWordsPerCue">Słów w jednym napisie</label>
+              <select id="advSrtWordsPerCue">
+                <option value="1">1 słowo</option>
+                <option value="2">2 słowa</option>
+                <option value="3">3 słowa</option>
+                <option value="4">4 słowa</option>
+                <option value="5">5 słów</option>
+                <option value="6">6 słów</option>
+                <option value="7">7 słów</option>
+                <option value="8">8 słów</option>
+                <option value="9">9 słów</option>
+                <option value="10">10 słów</option>
+              </select>
+              <div
+                style="font-size: 11px; color: var(--text3); margin-top: 4px"
+              >
+                Napis nie łączy dwóch zdań — ostatni napis zdania może mieć
+                mniej słów.
+              </div>
+            </div>
+            <div class="setting-item" style="grid-column: 1 / -1">
+              <label style="display: flex; align-items: center; gap: 8px">
+                <input
+                  type="checkbox"
+                  id="advSrtStripPunct"
+                  style="width: auto"
+                />
+                Usuń interpunkcję z napisów (.srt)
+              </label>
+              <div
+                style="font-size: 11px; color: var(--text3); margin-top: 4px"
+              >
+                Usuwa kropki, przecinki, znaki zapytania, cudzysłowy i myślniki.
+                Liczby (3,5 · 12:30) i słowa z łącznikiem (e-mail) zostają.
+                Działa w obu trybach eksportu.
               </div>
             </div>
           </div>

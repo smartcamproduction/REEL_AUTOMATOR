@@ -596,6 +596,10 @@ textarea::placeholder {
 .setting-item select option {
   background: var(--surface2);
 }
+.setting-item select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 .field-input {
   background: var(--surface2);

@@ -11,6 +11,7 @@ import {
   generateTranscriptSRT,
   generateWordSRT,
 } from '../../exporters/transcript.js';
+import { srtExportOptions } from '../export-srt.js';
 
 /**
  * True when at least one sentence carries a word with finite frame timing — the
@@ -31,13 +32,17 @@ export function hasFrameWords(sentences) {
 /**
  * Build SRT content honouring the word-by-word toggle: per-word when the toggle
  * is on AND frame-level word timing exists, otherwise clean sentence-level.
+ * Words-per-cue / punctuation prefs apply exactly as in the manual export.
  * @param {import('../../state.js').Sentence[]} sentences
  * @param {number} fps
  * @returns {string}
  */
 export function buildSrtContent(sentences, fps) {
+  const opts = srtExportOptions();
   if (state.whisperAdvanced.wordLevelSrtExport && hasFrameWords(sentences)) {
-    return generateWordSRT(sentences, fps);
+    return generateWordSRT(sentences, fps, opts);
   }
-  return generateTranscriptSRT(sentences, fps);
+  return generateTranscriptSRT(sentences, fps, {
+    stripPunctuation: opts.stripPunctuation,
+  });
 }

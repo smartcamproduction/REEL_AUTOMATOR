@@ -23,6 +23,7 @@ import {
   exportTranscriptSrt,
   buildTranscriptSrt,
   transcriptBase,
+  wordCueLabel,
 } from './export-srt.js';
 import {
   isElectron,
@@ -440,7 +441,7 @@ async function exportSubtitlesToResolve() {
     const scope = range ? ' (od punktu In)' : '';
     toast(
       (built.wordLevel
-        ? 'Dodano napisy słowo-po-słowie w DaVinci Resolve'
+        ? `Dodano napisy ${wordCueLabel(built.wordsPerCue)} w DaVinci Resolve`
         : 'Dodano napisy do osi czasu w DaVinci Resolve') + scope,
       'success',
     );

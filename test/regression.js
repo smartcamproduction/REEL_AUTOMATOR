@@ -20,6 +20,8 @@ import {
   generateTranscriptVTT,
   generateWordSRT,
   generateSegmentsMd,
+  stripPunctuation,
+  normalizeWordsPerCue,
 } from '../src/exporters/transcript.js';
 import { generateEDL } from '../src/exporters/edl.js';
 import { generateXML } from '../src/exporters/xml.js';
@@ -1847,6 +1849,188 @@ assert(
     mergedTl.clips[0].startFrame === s9.start_frame &&
     mergedTl.clips[0].endFrame === s10.end_frame,
   'merged clips 9+10 produce one span [clip9.start, clip10.end]',
+);
+
+// ─────────────────────────────────────────────────────────────────
+// Test 19: SRT words-per-cue + punctuation removal
+// generateWordSRT groups `wordsPerCue` words into one cue without crossing a
+// sentence boundary (same onset/fill-forward timing as Test 15, per group);
+// wordsPerCue=1 must stay byte-identical to the default output. The
+// stripPunctuation option removes sentence marks but keeps word-internal
+// hyphens/apostrophes and digit separators, and drops cues/words left empty.
+// FPS=25 → 1 frame = 40ms.
+// ─────────────────────────────────────────────────────────────────
+
+console.log('\n── Test 19: SRT words-per-cue + punctuation removal ─────');
+
+assertEq(
+  stripPunctuation('Cześć, jak się macie?'),
+  'Cześć jak się macie',
+  'stripPunctuation: comma + question mark removed',
+);
+assertEq(
+  stripPunctuation('„Tak” — powiedział… (cicho)!'),
+  'Tak powiedział cicho',
+  'stripPunctuation: quotes, dash, ellipsis, brackets removed; spaces collapsed',
+);
+assertEq(
+  stripPunctuation("e-mail, biało-czerwony i don't"),
+  "e-mail biało-czerwony i don't",
+  'stripPunctuation: word-internal hyphen/apostrophe kept',
+);
+assertEq(
+  stripPunctuation('Kosztuje 3,5 zł o 12:30, czyli 1.000 razy.'),
+  'Kosztuje 3,5 zł o 12:30 czyli 1.000 razy',
+  'stripPunctuation: digit separators kept, trailing marks removed',
+);
+assertEq(
+  stripPunctuation('50% & @user #tag'),
+  '50% & @user #tag',
+  'stripPunctuation: meaningful symbols (% & @ #) kept',
+);
+assertEq(
+  stripPunctuation('tak—nie'),
+  'tak nie',
+  'stripPunctuation: dash between words becomes a space',
+);
+assertEq(
+  stripPunctuation('linia 1.\nlinia 2!'),
+  'linia 1\nlinia 2',
+  'stripPunctuation: line breaks preserved',
+);
+assertEq(stripPunctuation('…'), '', 'stripPunctuation: punctuation-only → ""');
+
+assert(
+  normalizeWordsPerCue(undefined) === 1 &&
+    normalizeWordsPerCue(0) === 1 &&
+    normalizeWordsPerCue('abc') === 1 &&
+    normalizeWordsPerCue('3') === 3 &&
+    normalizeWordsPerCue(3.7) === 3 &&
+    normalizeWordsPerCue(99) === 10,
+  'normalizeWordsPerCue clamps to an integer in 1..10 (fallback 1)',
+);
+
+// wordsPerCue=1 is the classic mode — byte-identical to the default output.
+assertEq(
+  generateWordSRT(wordSrtSentences, FPS, { wordsPerCue: 1 }),
+  wordSRT,
+  'wordsPerCue=1 is byte-identical to the default word .srt',
+);
+
+// wordsPerCue=2 on Test 15's data: each sentence is exactly one cue, and the
+// cue does not borrow a word from the next sentence.
+assertEq(
+  generateWordSRT(wordSrtSentences, FPS, { wordsPerCue: 2 }),
+  [
+    '1',
+    '00:00:00,000 --> 00:00:02,000', // start 0, held to next cue onset 50
+    'Słowo drugie',
+    '',
+    '2',
+    '00:00:02,000 --> 00:00:02,160', // start 50, final: max(53, 50+4) = 54
+    'trzecie czwarte',
+    '',
+  ].join('\n'),
+  'wordsPerCue=2 groups words per sentence with group fill-forward timing',
+);
+
+const punctSentences = [
+  {
+    id: 1,
+    text: 'Cześć, jak się macie?',
+    start_frame: 0,
+    end_frame: 40,
+    words: [
+      { text: 'Cześć,', start_frame: 0, end_frame: 10 },
+      { text: 'jak', start_frame: 12, end_frame: 18 },
+      { text: 'się', start_frame: 20, end_frame: 26 },
+      { text: 'macie?', start_frame: 28, end_frame: 40 },
+    ],
+  },
+  {
+    id: 2,
+    text: '…',
+    start_frame: 40,
+    end_frame: 50,
+    words: [],
+  },
+  {
+    id: 3,
+    text: 'To – test.',
+    start_frame: 60,
+    end_frame: 80,
+    words: [
+      { text: 'To', start_frame: 60, end_frame: 66 },
+      { text: '–', start_frame: 68, end_frame: 70 },
+      { text: 'test.', start_frame: 72, end_frame: 80 },
+    ],
+  },
+];
+
+// wordsPerCue=3: sentence 1 splits 3 + 1 (the remainder stays in its sentence).
+assertEq(
+  generateWordSRT(punctSentences, FPS, { wordsPerCue: 3 }),
+  [
+    '1',
+    '00:00:00,000 --> 00:00:01,120', // start 0, held to next cue onset 28
+    'Cześć, jak się',
+    '',
+    '2',
+    '00:00:01,120 --> 00:00:02,400', // start 28, held to next cue onset 60
+    'macie?',
+    '',
+    '3',
+    '00:00:02,400 --> 00:00:03,200', // start 60, final: last word end 80
+    'To – test.',
+    '',
+  ].join('\n'),
+  'wordsPerCue=3 splits a 4-word sentence 3+1, never across sentences',
+);
+
+// Same with punctuation removal: the lone "–" word vanishes before grouping.
+assertEq(
+  generateWordSRT(punctSentences, FPS, {
+    wordsPerCue: 3,
+    stripPunctuation: true,
+  }),
+  [
+    '1',
+    '00:00:00,000 --> 00:00:01,120',
+    'Cześć jak się',
+    '',
+    '2',
+    '00:00:01,120 --> 00:00:02,400',
+    'macie',
+    '',
+    '3',
+    '00:00:02,400 --> 00:00:03,200',
+    'To test',
+    '',
+  ].join('\n'),
+  'word .srt + stripPunctuation drops marks and punctuation-only words',
+);
+
+// Sentence-level: stripping renumbers after dropping the "…"-only cue; without
+// the option the output keeps every cue verbatim (unchanged default).
+assertEq(
+  generateTranscriptSRT(punctSentences, FPS, { stripPunctuation: true }),
+  [
+    '1',
+    '00:00:00,000 --> 00:00:01,600',
+    'Cześć jak się macie',
+    '',
+    '2',
+    '00:00:02,400 --> 00:00:03,200',
+    'To test',
+    '',
+  ].join('\n'),
+  'sentence .srt + stripPunctuation drops the empty cue and renumbers',
+);
+assert(
+  generateTranscriptSRT(punctSentences, FPS).includes(
+    '2\n00:00:01,600 --> 00:00:02,000\n…',
+  ),
+  'sentence .srt without the option keeps punctuation-only cues verbatim',
 );
 
 // ─────────────────────────────────────────────────────────────────

@@ -3,6 +3,58 @@
 // stay simple. `.srt` optionally embeds word-level timing as a comment block
 // when sentences carry words[].
 
+/** Upper bound for the "words per cue" setting of the word-by-word `.srt`. */
+export const MAX_WORDS_PER_CUE = 10;
+
+// Characters removed by `stripPunctuation`: sentence marks, quotes, brackets and
+// dashes. Deliberately NOT the whole `\p{P}` class — symbols that carry meaning
+// in a caption (% & @ # / + $ €) are kept.
+const STRIP_PUNCT_RE = /[.,;:!?…"'„“”‘’«»‹›()[\]{}¿¡–—-]/g;
+const ALNUM_RE = /[\p{L}\p{N}]/u;
+const DIGIT_RE = /\p{N}/u;
+
+/**
+ * Remove punctuation from caption text. Word-internal hyphens/apostrophes
+ * (`e-mail`, `biało-czerwony`, `don't`) and number separators between digits
+ * (`3,5`, `1.000`, `12:30`) are kept; a dash between words becomes a space.
+ * Whitespace is collapsed per line and empty lines are dropped, so a
+ * punctuation-only input (`"…"`, `"–"`) returns `''`. Pure function.
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripPunctuation(text) {
+  return String(text ?? '')
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(STRIP_PUNCT_RE, (ch, i, str) => {
+          const prev = str[i - 1] || '';
+          const next = str[i + 1] || '';
+          if ("-'’".includes(ch) && ALNUM_RE.test(prev) && ALNUM_RE.test(next))
+            return ch;
+          if ('.,:'.includes(ch) && DIGIT_RE.test(prev) && DIGIT_RE.test(next))
+            return ch;
+          return '-–—'.includes(ch) ? ' ' : '';
+        })
+        .replace(/\s+/g, ' ')
+        .trim(),
+    )
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * Clamp a "words per cue" value to an integer in 1..{@link MAX_WORDS_PER_CUE};
+ * anything missing or non-numeric falls back to 1 (classic word-by-word).
+ * @param {unknown} n
+ * @returns {number}
+ */
+export function normalizeWordsPerCue(n) {
+  const v = Math.floor(Number(n));
+  if (!Number.isFinite(v) || v < 1) return 1;
+  return Math.min(v, MAX_WORDS_PER_CUE);
+}
+
 /**
  * Format a frame count as an SRT/VTT timestamp.
  * @param {number} frames
@@ -27,20 +79,28 @@ function frameToStamp(frames, fps, sep) {
  * `NOTE WORDS:` line (per-word `text@start-end` in frames) for tooling — this
  * embeds word timing at the cost of standard re-import. Word-level data is also
  * durably persisted in the `.reelproj` (v4) regardless of this flag.
+ * `{stripPunctuation:true}` runs each cue's text through
+ * {@link stripPunctuation}; a cue left empty by it is dropped (an empty body
+ * would end the SRT block early) and the remaining cues are renumbered.
  * @param {import('../state.js').Sentence[]} sentences
  * @param {number} fps
- * @param {{includeWords?: boolean}} [opts]
+ * @param {{includeWords?: boolean, stripPunctuation?: boolean}} [opts]
  * @returns {string}
  */
 export function generateTranscriptSRT(sentences, fps, opts = {}) {
   const includeWords = opts.includeWords === true;
+  const strip = opts.stripPunctuation === true;
   const out = [];
-  sentences.forEach((s, i) => {
-    out.push(String(i + 1));
+  let n = 0;
+  sentences.forEach((s) => {
+    const text = strip ? stripPunctuation(s.text) : s.text;
+    if (strip && !text) return;
+    n += 1;
+    out.push(String(n));
     out.push(
       `${frameToStamp(s.start_frame, fps, ',')} --> ${frameToStamp(s.end_frame, fps, ',')}`,
     );
-    out.push(s.text);
+    out.push(text);
     if (includeWords && Array.isArray(s.words) && s.words.length) {
       const words = s.words
         .map((w) => `${w.text}@${w.start_frame}-${w.end_frame}`)
@@ -65,15 +125,28 @@ export function generateTranscriptSRT(sentences, fps, opts = {}) {
  * never reversed. Words are flattened in global order across sentence
  * boundaries, so fill respects real audio adjacency. Speaker labels are never
  * emitted. Pure function.
+ *
+ * `opts.wordsPerCue` (1..{@link MAX_WORDS_PER_CUE}, default 1) groups that many
+ * consecutive words into one cue. A cue never straddles a sentence boundary, so
+ * the last cue of a sentence may hold fewer words. The same timing rules apply
+ * to the group: start at its first word's onset, held forward to the next
+ * cue's onset; the final cue ends at its last word's end (4-frame floor).
+ * `opts.stripPunctuation` runs each word through {@link stripPunctuation} and
+ * drops words left empty by it (e.g. a lone `–`) before grouping.
  * @param {import('../state.js').Sentence[]} sentences
  * @param {number} fps
+ * @param {{wordsPerCue?: number, stripPunctuation?: boolean}} [opts]
  * @returns {string}
  */
-export function generateWordSRT(sentences, fps) {
+export function generateWordSRT(sentences, fps, opts = {}) {
   const FLOOR_FRAMES = 4;
-  const words = [];
+  const perCue = normalizeWordsPerCue(opts.wordsPerCue);
+  const strip = opts.stripPunctuation === true;
+  /** @type {{text:string,start_frame:number,end_frame:number}[][]} */
+  const cues = [];
   sentences.forEach((s) => {
     if (!Array.isArray(s.words)) return;
+    let group = [];
     s.words.forEach((w) => {
       if (
         typeof w.start_frame === 'number' &&
@@ -81,25 +154,34 @@ export function generateWordSRT(sentences, fps) {
         Number.isFinite(w.start_frame) &&
         Number.isFinite(w.end_frame)
       ) {
-        words.push(w);
+        const text = strip ? stripPunctuation(w.text) : w.text;
+        if (strip && !text) return;
+        group.push({ ...w, text });
+        if (group.length === perCue) {
+          cues.push(group);
+          group = [];
+        }
       }
     });
+    if (group.length) cues.push(group);
   });
   const out = [];
-  words.forEach((w, i) => {
-    const start = w.start_frame;
-    const next = words[i + 1];
-    // Gapless fill-forward: hold this cue until the next word's onset (clamped
+  cues.forEach((group, i) => {
+    const start = group[0].start_frame;
+    const last = group[group.length - 1];
+    const next = cues[i + 1];
+    // Gapless fill-forward: hold this cue until the next cue's onset (clamped
     // to `start` so an overlapping successor can't reverse the cue). The last
-    // word has no successor, so it keeps its own end with the 4-frame floor.
+    // cue has no successor, so it keeps its last word's end with the 4-frame
+    // floor.
     const end = next
-      ? Math.max(start, next.start_frame)
-      : Math.max(w.end_frame, start + FLOOR_FRAMES);
+      ? Math.max(start, next[0].start_frame)
+      : Math.max(last.end_frame, start + FLOOR_FRAMES);
     out.push(String(i + 1));
     out.push(
       `${frameToStamp(start, fps, ',')} --> ${frameToStamp(end, fps, ',')}`,
     );
-    out.push(w.text);
+    out.push(group.map((w) => w.text).join(' '));
     out.push('');
   });
   return out.join('\n');

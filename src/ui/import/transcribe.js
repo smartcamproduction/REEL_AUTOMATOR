@@ -6,7 +6,10 @@
 import { state, emit } from '../../state.js';
 import { toast } from '../toast.js';
 import { segmentFromWords } from '../../parser/word-segments.js';
-import { generateTranscriptVTT } from '../../exporters/transcript.js';
+import {
+  generateTranscriptVTT,
+  normalizeWordsPerCue,
+} from '../../exporters/transcript.js';
 import { getApiKey, setApiKey } from '../../ai/api-key.js';
 import { saveTextToPath } from '../../util/save-file.js';
 import {
@@ -557,13 +560,16 @@ function defaultWhisperAdvanced() {
     minSpeakers: null,
     maxSpeakers: null,
     wordLevelSrtExport: false,
+    srtWordsPerCue: 1,
+    srtStripPunctuation: false,
     punctuation: true,
   };
 }
 
 /**
  * Hydrate the per-machine advanced prefs (device / computeType /
- * wordLevelSrtExport) from localStorage into state.whisperAdvanced.
+ * wordLevelSrtExport / srtWordsPerCue / srtStripPunctuation) from localStorage
+ * into state.whisperAdvanced.
  * @returns {void}
  */
 function loadWhisperAdvancedFromLS() {
@@ -575,6 +581,12 @@ function loadWhisperAdvancedFromLS() {
       state.whisperAdvanced.computeType = saved.computeType;
     if (typeof saved.wordLevelSrtExport === 'boolean')
       state.whisperAdvanced.wordLevelSrtExport = saved.wordLevelSrtExport;
+    if (typeof saved.srtWordsPerCue === 'number')
+      state.whisperAdvanced.srtWordsPerCue = normalizeWordsPerCue(
+        saved.srtWordsPerCue,
+      );
+    if (typeof saved.srtStripPunctuation === 'boolean')
+      state.whisperAdvanced.srtStripPunctuation = saved.srtStripPunctuation;
   } catch (e) {}
 }
 
@@ -592,9 +604,22 @@ function saveWhisperAdvancedToLS() {
         device: state.whisperAdvanced.device,
         computeType: state.whisperAdvanced.computeType,
         wordLevelSrtExport: state.whisperAdvanced.wordLevelSrtExport,
+        srtWordsPerCue: state.whisperAdvanced.srtWordsPerCue,
+        srtStripPunctuation: state.whisperAdvanced.srtStripPunctuation,
       }),
     );
   } catch (e) {}
+}
+
+/**
+ * The words-per-cue picker only matters in word-by-word mode — grey it out
+ * while the word-SRT toggle is off.
+ * @returns {void}
+ */
+function syncSrtWordsPerCueEnabled() {
+  const toggle = document.getElementById('advWordLevelSrt');
+  const select = document.getElementById('advSrtWordsPerCue');
+  if (toggle && select) select.disabled = !toggle.checked;
 }
 
 function initWhisperAdvanced() {
@@ -624,6 +649,26 @@ function initWhisperAdvanced() {
   if (wordSrtEl) {
     wordSrtEl.addEventListener('change', (e) => {
       state.whisperAdvanced.wordLevelSrtExport = e.target.checked;
+      syncSrtWordsPerCueEnabled();
+      saveWhisperAdvancedToLS();
+      emit();
+    });
+  }
+  // The other two SRT-export prefs are live-persisted the same way.
+  const wordsPerCueEl = document.getElementById('advSrtWordsPerCue');
+  if (wordsPerCueEl) {
+    wordsPerCueEl.addEventListener('change', (e) => {
+      state.whisperAdvanced.srtWordsPerCue = normalizeWordsPerCue(
+        e.target.value,
+      );
+      saveWhisperAdvancedToLS();
+      emit();
+    });
+  }
+  const stripPunctEl = document.getElementById('advSrtStripPunct');
+  if (stripPunctEl) {
+    stripPunctEl.addEventListener('change', (e) => {
+      state.whisperAdvanced.srtStripPunctuation = e.target.checked;
       saveWhisperAdvancedToLS();
       emit();
     });
@@ -685,6 +730,11 @@ function fillWhisperAdvancedForm() {
   document.getElementById('advMinSpeakers').value = a.minSpeakers ?? '';
   document.getElementById('advMaxSpeakers').value = a.maxSpeakers ?? '';
   document.getElementById('advWordLevelSrt').checked = !!a.wordLevelSrtExport;
+  document.getElementById('advSrtWordsPerCue').value = String(
+    normalizeWordsPerCue(a.srtWordsPerCue),
+  );
+  syncSrtWordsPerCueEnabled();
+  document.getElementById('advSrtStripPunct').checked = !!a.srtStripPunctuation;
   // Cohere-only knob (default-on). Older state shapes omit it → treat as on.
   document.getElementById('advPunctuation').checked = a.punctuation !== false;
 }
@@ -710,6 +760,10 @@ function applyWhisperAdvancedForm() {
   a.minSpeakers = numOrNull('advMinSpeakers');
   a.maxSpeakers = numOrNull('advMaxSpeakers');
   a.wordLevelSrtExport = document.getElementById('advWordLevelSrt').checked;
+  a.srtWordsPerCue = normalizeWordsPerCue(
+    document.getElementById('advSrtWordsPerCue').value,
+  );
+  a.srtStripPunctuation = document.getElementById('advSrtStripPunct').checked;
   a.punctuation = document.getElementById('advPunctuation').checked;
 }
 

@@ -14,7 +14,33 @@ import { saveTextToPath } from '../util/save-file.js';
 import {
   generateTranscriptSRT,
   generateWordSRT,
+  normalizeWordsPerCue,
 } from '../exporters/transcript.js';
+
+/**
+ * The per-machine `.srt` export prefs (words per cue, punctuation removal) as
+ * exporter options — shared with the auto-mode SRT path (srt-mode.js).
+ * @returns {{ wordsPerCue: number, stripPunctuation: boolean }}
+ */
+export function srtExportOptions() {
+  const a = state.whisperAdvanced;
+  return {
+    wordsPerCue: normalizeWordsPerCue(a.srtWordsPerCue),
+    stripPunctuation: a.srtStripPunctuation === true,
+  };
+}
+
+/**
+ * Polish label for the word-mode cue size, used in success toasts:
+ * 1 → "słowo-po-słowie", 3 → "po 3 słowa", 5 → "po 5 słów".
+ * @param {number} n - words per cue
+ * @returns {string}
+ */
+export function wordCueLabel(n) {
+  if (n <= 1) return 'słowo-po-słowie';
+  const few = n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14);
+  return `po ${n} ${few ? 'słowa' : 'słów'}`;
+}
 
 // True when at least one sentence carries a word with finite frame timing —
 // i.e. frame-normalized word data the word exporter can actually emit.
@@ -45,21 +71,26 @@ export function transcriptBase() {
  * first when no frame-level word timing exists yet (heavy ~37–67s cold spawn,
  * behind an ask() confirmation). Returns the SRT string, or `null` when the
  * export should abort — every abort path surfaces a Polish toast, never silent.
+ * Both modes honor the words-per-cue / punctuation prefs ({@link srtExportOptions}).
  * @param {import('../state.js').Sentence[]} [sentences] - subset to emit
  *   (defaults to the full transcript); the Mode C In/Out-range push passes a
  *   range-filtered subset so word/sentence selection stays identical.
- * @returns {Promise<{ content: string, wordLevel: boolean } | null>}
+ * @returns {Promise<{ content: string, wordLevel: boolean, wordsPerCue: number } | null>}
  */
 export async function buildTranscriptSrt(sentences = state.sentences) {
   if (!sentences.length) {
     toast('Brak transkrypcji do eksportu.', 'info');
     return null;
   }
+  const opts = srtExportOptions();
   // Mode OFF → sentence-level .srt.
   if (!state.whisperAdvanced.wordLevelSrtExport) {
     return {
-      content: generateTranscriptSRT(sentences, state.fps),
+      content: generateTranscriptSRT(sentences, state.fps, {
+        stripPunctuation: opts.stripPunctuation,
+      }),
       wordLevel: false,
+      wordsPerCue: opts.wordsPerCue,
     };
   }
   // Mode ON → word-by-word .srt. Needs frame-based words[]; auto-align when
@@ -87,8 +118,9 @@ export async function buildTranscriptSrt(sentences = state.sentences) {
     }
   }
   return {
-    content: generateWordSRT(sentences, state.fps),
+    content: generateWordSRT(sentences, state.fps, opts),
     wordLevel: true,
+    wordsPerCue: opts.wordsPerCue,
   };
 }
 
@@ -107,7 +139,7 @@ export async function exportTranscriptSrt() {
   if (saved) {
     toast(
       built.wordLevel
-        ? 'Zapisano napisy słowo-po-słowie'
+        ? `Zapisano napisy ${wordCueLabel(built.wordsPerCue)}`
         : 'Zapisano transkrypcję',
       'success',
     );
